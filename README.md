@@ -7,7 +7,7 @@ The original goal was to help spot network issues (connections lost) by looking 
 
 ## Usage
 ```
-usage: TeamsAuditLogAnalyzer [--debug] [--help|-?] [--version]
+usage: tala [--debug] [--help|-?] [--version]
        [-o|--organizers] [-a|--attendees]
        [-u|--users FILE]
        [-d|--disconnect] [-i|--ip REGEX]
