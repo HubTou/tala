@@ -32,7 +32,7 @@ You can either use it:
 * to produce/update/use a CSV file with UUID,EMAIL of organizers/attendees (-u FILE)
 * to analyze suspected disconnection cases (-d)
   * in this last case, to restrict cases to the ones made from specific IP addresses (-i REGEX), as you normally don't care about people connecting from home rather than your internal enterprise network
-    * for example "^10\.5[78]\." for IPv4 addresses beginning with "10.57." or "10.58.".
+    * for example "^10\\.5[78]\\." for IPv4 addresses beginning with "10.57." or "10.58.".
 
 Please note that the suspected disconnection cases are still crude so far, and contain false positives (for example, when you have multiple rather than successive connections to the same meeting, using different devices).
 
