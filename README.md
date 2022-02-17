@@ -3,7 +3,7 @@
 ## What is it?
 A portable Python-only tool to process Microsoft Teams Audit Logs.
 
-The original goal was to help spot network issues (connections lost) by looking at people making multiple connections to the same meeting.
+The original goal was to help spot network issues (connections lost) by looking at people making multiple successive connections to the same meeting.
 
 ## Usage
 ```
