@@ -14,7 +14,7 @@ import signal
 import sys
 
 # Chaîne de version utilisée par les commandes what(1) et ident(1) :
-ID = "@(#) $Id: tala - Teams Audit Log Analyzer v2.0.0 (17 Février 2022) par Hubert Tournier $"
+ID = "@(#) $Id: tala - Teams Audit Log Analyzer v2.0.1 (18 Février 2022) par Hubert Tournier $"
 
 # Paramètres par défaut. Peuvent être redéfinis via la ligne de commande
 parametres = {
@@ -423,17 +423,32 @@ def extraire_reunions(fichier, afficher):
 
             if id_reunion in participants:
                 if cle_participant in participants[id_reunion]:
+                    i = 0
                     doublon = False
-                    for connexion in participants[id_reunion][cle_participant]:
-                        if debut == connexion["debut"] \
-                        and fin == connexion["fin"] \
-                        and adresse_ip == connexion["adresse_ip"] \
-                        and materiel == connexion["materiel"] \
-                        and propriete == connexion["propriete"] \
-                        and type_cle == connexion["type_cle"] \
-                        and id_organisation_participant == connexion["id_organisation"]:
+                    while i < len(participants[id_reunion][cle_participant]):
+                        if debut == participants[id_reunion][cle_participant][i]["debut"] \
+                        and fin == participants[id_reunion][cle_participant][i]["fin"] \
+                        and adresse_ip == participants[id_reunion][cle_participant][i]["adresse_ip"] \
+                        and materiel == participants[id_reunion][cle_participant][i]["materiel"] \
+                        and propriete == participants[id_reunion][cle_participant][i]["propriete"] \
+                        and type_cle == participants[id_reunion][cle_participant][i]["type_cle"] \
+                        and id_organisation_participant == participants[id_reunion][cle_participant][i]["id_organisation"]:
                             doublon = True
                             break
+
+                        # On va trier les connexions par heure de début, puis par heure de fin :
+                        secondes_debut_nouveau = convertir_secondes(debut)
+                        secondes_debut_element = convertir_secondes(participants[id_reunion][cle_participant][i]["debut"])
+                        if secondes_debut_nouveau < secondes_debut_element:
+                            break
+                        elif secondes_debut_nouveau == secondes_debut_element:
+                            secondes_fin_nouveau = convertir_secondes(fin)
+                            secondes_fin_element = convertir_secondes(participants[id_reunion][cle_participant][i]["fin"])
+                            if secondes_fin_nouveau <= secondes_fin_element:
+                                break
+
+                        i += 1
+
                     if not doublon:
                         # Nouvelle connexion du participant à la réunion
                         details_connexion = {}
@@ -444,7 +459,11 @@ def extraire_reunions(fichier, afficher):
                         details_connexion["adresse_ip"] = adresse_ip
                         details_connexion["materiel"] = materiel
                         details_connexion["propriete"] = propriete
-                        participants[id_reunion][cle_participant].append(details_connexion)
+
+                        # insertion triée :
+                        participants[id_reunion][cle_participant] = participants[id_reunion][cle_participant][:i] \
+                                                                    + [details_connexion] \
+                                                                    +  participants[id_reunion][cle_participant][i:]
                 else:
                     # Nouveau participant à la réunion
                     details_connexion = {}
