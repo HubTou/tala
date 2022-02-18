@@ -31,8 +31,9 @@ You can either use it:
 * to produce a CSV file with the relevant meetings/attendees information (-a)
 * to produce/update/use a CSV file with UUID,EMAIL of organizers/attendees (-u FILE)
 * to analyze suspected disconnection cases (-d)
-  * in this last case, to restrict cases to the ones made from specific IP addresses (-i REGEX), as you normally don't care about people connecting from home rather than your internal enterprise network
+  * you can restrict cases to the ones made from specific IP addresses (-i REGEX), as you normally don't care about people connecting from home rather than your internal enterprise network.
     * for example "^10\\.5[78]\\." for IPv4 addresses beginning with "10.57." or "10.58.".
+  * you can use the CSV file with UUID,EMAIL to identify attendees encountering network issues (-u FILE)
 
 Please note that the suspected disconnection cases are still crude so far, and contain false positives (for example, when you have multiple rather than successive connections to the same meeting, using different devices).
 
@@ -43,7 +44,9 @@ Please note that the suspected disconnection cases are still crude so far, and c
 | 1 | header line | "CreationDate,UserIds,Operations,AuditData" |
 | 2-50001 | content lines | field1,field2,field3,field4 |
 
-The audit data seems to be truncated at 50.000 lines per extract file.
+The audit data is truncated at 50.000 lines per extract file.
+
+If you have files with exactly 50.001 lines, try exporting data on a shorter time span.
 
 ### Content lines format
 
