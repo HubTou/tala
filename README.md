@@ -1,3 +1,5 @@
+[![Servier Inspired](https://raw.githubusercontent.com/RomualdRousseau/ServierHub/main/badges/inspired.svg)](https://servier.com/)
+
 # tala - (Microsoft) Teams Audit Log Analyzer
 
 ## What is it?
