@@ -7,14 +7,16 @@ Auteur: Hubert Tournier
 import csv
 import datetime
 import getopt
+import json
 import logging
 import os
+import pprint
 import re
 import signal
 import sys
 
 # Chaîne de version utilisée par les commandes what(1) et ident(1) :
-ID = "@(#) $Id: tala - Teams Audit Log Analyzer v2.0.1 (18 Février 2022) par Hubert Tournier $"
+ID = "@(#) $Id: tala - Teams Audit Log Analyzer v3.0.0 (12 Avril 2024) par Hubert Tournier $"
 
 # Paramètres par défaut. Peuvent être redéfinis via la ligne de commande
 parametres = {
@@ -26,6 +28,7 @@ parametres = {
     "Filtre adresses": None,
 }
 
+DELIMITER = ","
 
 ################################################################################
 def _initialisation_journalisation(nom_programme):
@@ -33,7 +36,6 @@ def _initialisation_journalisation(nom_programme):
     format_journal = nom_programme + ": %(levelname)s: %(message)s"
     logging.basicConfig(format=format_journal, level=logging.DEBUG)
     logging.disable(logging.INFO)
-
 
 ################################################################################
 def _afficher_aide():
@@ -59,7 +61,6 @@ def _afficher_aide():
     print("  --               Options processing terminator", file=sys.stderr)
     print(file=sys.stderr)
 
-
 ################################################################################
 def _gestion_controle_c(signal_number, current_stack_frame):
     """ Ne pas afficher de stack trace sur contrôle-C """
@@ -67,12 +68,10 @@ def _gestion_controle_c(signal_number, current_stack_frame):
     _afficher_aide()
     sys.exit(1)
 
-
 ################################################################################
 def _gestion_signaux():
     """ Gestion des signaux """
     signal.signal(signal.SIGINT, _gestion_controle_c)
-
 
 ################################################################################
 def _gestion_ligne_commande():
@@ -131,11 +130,7 @@ def _gestion_ligne_commande():
             parametres["Lister deconnexions"] = False
 
         elif option in ("-u", "--users"):
-            if os.path.isfile(argument):
-                parametres["Base utilisateurs"] = argument
-            else:
-                logging.critical("'%s' is not a file", argument)
-                sys.exit(1)
+            parametres["Base utilisateurs"] = argument
 
         elif option == "--debug":
             logging.disable(logging.NOTSET)
@@ -150,93 +145,10 @@ def _gestion_ligne_commande():
 
     return arguments_restants
 
-
-################################################################################
-def decouper_audit_data(chaine):
-    """ Parseur maison, pour garder l'imbrication des informations dans le journal """
-    audit_data = {}
-
-    # On élimine les accolades en début et fin de chaîne
-    chaine = chaine[1:-1]
-
-    dans_champ = False
-    dans_cle = False
-    cle = ""
-    dans_valeur = False
-    valeur = ""
-    for caractere in chaine:
-        if dans_champ:
-            if dans_cle:
-                if caractere == '"':
-                    dans_cle = False
-                else:
-                    cle += caractere
-            elif dans_valeur:
-                if type_valeur is None:
-                    if caractere == '"':
-                        type_valeur = "chaine"
-                    elif caractere == '[':
-                        type_valeur = "liste"
-                    elif "0" <= caractere <= "9":
-                        type_valeur = "nombre"
-                        valeur += caractere
-                    else:
-                        logging.error("Caractere inattendu dans la valeur d'un champ : %s", caractere)
-                        return None
-                elif type_valeur == "chaine":
-                    if caractere == '"':
-                        audit_data[cle] = valeur
-                        dans_valeur = False
-                        dans_champ = False
-                    else:
-                        valeur += caractere
-                elif type_valeur == "nombre":
-                    if "0" <= caractere <= "9":
-                        valeur += caractere
-                    elif caractere == ',':
-                        try:
-                            audit_data[cle] = int(valeur)
-                        except:
-                            logging.error("Le champ numérique ne contient pas une valeur entière : %s", valeur)
-                            return None
-                        dans_valeur = False
-                        dans_champ = False
-                    else:
-                        logging.error("Caractere inattendu dans la valeur numerique d'un champ : %s", caractere)
-                        return None
-                elif type_valeur == "liste":
-                    if caractere == ']':
-                        liste = decouper_audit_data(valeur)
-                        audit_data[cle] = liste
-                        dans_valeur = False
-                        dans_champ = False
-                    else:
-                        valeur += caractere
-            elif caractere == ':':
-                dans_valeur = True
-                type_valeur = None
-                valeur = ""
-            else:
-                logging.error("Caractere inattendu dans le champ : %s", caractere)
-                return None
-        elif caractere == '"':
-            dans_champ = True
-            dans_cle = True
-            cle = ""
-        elif caractere == ',':
-            dans_champ = False
-        else:
-            logging.error("Caractere inattendu hors champ : %s", caractere)
-            return None
-
-    return audit_data
-
-
 ################################################################################
 def convertir_secondes(chaine):
     """ Retourne le nombre de secondes écoulées depuis l'Epoch à partir d'une chaîne de date """
     return datetime.datetime.strptime(chaine, "%Y-%m-%dT%H:%M:%S").timestamp()
-
 
 ################################################################################
 def extraire_reunions(fichier, afficher):
@@ -245,227 +157,196 @@ def extraire_reunions(fichier, afficher):
     organisateurs = {}
     participants = {}
 
-    lecteur = csv.reader(fichier)
-    lignes = list(lecteur)
     numero_ligne = 1
+    lignes = csv.DictReader(fichier, delimiter=DELIMITER)
     for ligne in lignes:
+        if ligne["Operation"] != "MeetingParticipantDetail":
+            logging.warning(f"Ligne {numero_ligne} : 'Operation' différent de 'MeetingParticipantDetail' : {ligne['Operation']}")
 
-        # si l'on n'est pas sur la ligne d'en-têtes :
-        if ligne[0][0] == "2": # TODO à améliorer
-            if ligne[2] != "MeetingParticipantDetail":
-                logging.warning("Ligne {} : 'Operations' différent de 'MeetingParticipantDetail' : {}".format(numero_ligne, ligne[2]))
+        details = json.loads(ligne["AuditData"])
 
-            details = decouper_audit_data(ligne[3])
+        if afficher:
+            print(f"Line #{numero_ligne}")
+            print(f"CreationDate={ligne['CreationDate']}")
+            print(f"UserId={ligne['UserId']}")
+            print(f"Operation={ligne['Operation']}")
+            print("AuditData:")
+            pprint.pprint(details, compact=False, sort_dicts=False)
+            if "Operation" in details and details["Operation"] != "MeetingParticipantDetail":
+                logging.info(f"Ligne {numero_ligne} : 'Operation' différent de 'MeetingParticipantDetail': {details['Operation']}")
+            if "Workload" in details and details["Workload"] != "MicrosoftTeams":
+                logging.info(f"Ligne {numero_ligne} : 'Workload' différent de 'MicrosoftTeams': {details['Workload']}")
+            if "ArtifactSharedName" in details and details["ArtifactSharedName"] != "videoTransmitted":
+                logging.info("Ligne {numero_ligne} : 'ArtifactSharedName' différent de 'videoTransmitted': {details['ArtifactSharedName']}")
+            if "Key" in details and details["Key"] != "UserAgent":
+                logging.info(f"Ligne {numero_ligne} : 'Key' différent de 'UserAgent': {details['Key']}")
+            if "RecipientType" in details and details["RecipientType"] not in ("User", "Anonymous", "Applications", "Phone"):
+                logging.info(f"Ligne {numero_ligne} : 'RecipientType' différent des valeurs connues: {details['RecipientType']}")
+            if "ItemName" in details and details["ItemName"] not in ("ScheduledMeeting", "RecurringMeeting", "Escalation", "AdHocMeeting", "ChannelMeeting", "MicrosoftTeams", "Complete", "Broadcast", "ScreenSharingCall", "31"):
+                logging.info(f"Ligne {numero_ligne} : 'ItemName' différent des valeurs connues: {details['ItemName']}")
+            if "RecordType" in details and details["RecordType"] != 25:
+                logging.info(f"Ligne {numero_ligne} : 'RecordType' différent de 25: {details['RecordType']}")
+            if "UserType" in details and details["UserType"] != 0:
+                logging.info(f"Ligne {numero_ligne} : 'UserType' différent de 0: {details['UserType']}")
+            if "Version" in details and details["Version"] != 1:
+                logging.info(f"Ligne {numero_ligne} : 'Version' différent de 1: {details['Version']}")
+            print()
 
-            if afficher:
-                print("Line #{}".format(numero_ligne))
-                print("CreationDate={}".format(ligne[0]))
-                print("UserIds={}".format(ligne[1]))
-                print("Operations={}".format(ligne[2]))
-                if ligne[2] != "MeetingParticipantDetail":
-                    logging.info("Ligne {} : 'Operations' différent de 'MeetingParticipantDetail': {}".format(numero_ligne, ligne[2]))
-                print("AuditData:")
-                for cle in details:
-                    if isinstance(details[cle], str):
-                        print("  " + cle + "=" + details[cle])
-                        if cle == "Operation" and details[cle] != "MeetingParticipantDetail":
-                            logging.info("Ligne {} : 'Operation' différent de 'MeetingParticipantDetail': {}".format(numero_ligne, details[cle]))
-                        if cle == "Workload" and details[cle] != "MicrosoftTeams":
-                            logging.info("Ligne {} : 'Workload' différent de 'MicrosoftTeams': {}".format(numero_ligne, details[cle]))
-                        if cle == "ArtifactSharedName" and details[cle] != "videoTransmitted":
-                            logging.info("Ligne {} : 'ArtifactSharedName' différent de 'videoTransmitted': {}".format(numero_ligne, details[cle]))
-                        if cle == "Key" and details[cle] != "UserAgent":
-                            logging.info("Ligne {} : 'Key' différent de 'UserAgent': {}".format(numero_ligne, details[cle]))
-                        if cle == "RecipientType" and details[cle] not in ("User", "Anonymous", "Applications", "Phone"):
-                            logging.info("Ligne {} : 'RecipientType' différent des valeurs connues: {}".format(numero_ligne, details[cle]))
-                        if cle == "ItemName" and details[cle] not in ("ScheduledMeeting", "RecurringMeeting", "Escalation", "AdHocMeeting", "ChannelMeeting", "MicrosoftTeams", "Complete", "Broadcast", "ScreenSharingCall", "31"):
-                            logging.info("Ligne {} : 'ItemName' différent des valeurs connues: {}".format(numero_ligne, details[cle]))
+        id_reunion = ""
+        if "MeetingDetailId" in details:
+            id_reunion = details["MeetingDetailId"]
+        else:
+            logging.warning(f"Ligne {numero_ligne} : 'MeetingDetailId' absent")
 
-                    elif isinstance(details[cle], int):
-                        print("  " + cle + "=" + str(details[cle]))
-                        if cle == "RecordType" and details[cle] != 25:
-                            logging.info("Ligne {} : 'RecordType' différent de 25: {}".format(numero_ligne, details[cle]))
-                        if cle == "UserType" and details[cle] != 0:
-                            logging.info("Ligne {} : 'UserType' différent de 0: {}".format(numero_ligne, details[cle]))
-                        if cle == "Version" and details[cle] != 1:
-                            logging.info("Ligne {} : 'Version' différent de 1: {}".format(numero_ligne, details[cle]))
+        email_organisateur = ""
+        if "UserId" in details:
+            email_organisateur = details["UserId"]
+        else:
+            logging.info(f"Ligne {numero_ligne} : 'UserId' absent")
 
-                    elif isinstance(details[cle], dict):
-                        print("  " + cle + ":")
-                        for sous_cle in details[cle]:
-                            if isinstance(details[cle][sous_cle], str):
-                                print("    " + sous_cle + "=" + details[cle][sous_cle])
-                            elif isinstance(details[cle][sous_cle], int):
-                                print("    " + sous_cle + "=" + str(details[cle][sous_cle]))
-                print()
+        id_organisateur = ""
+        if "UserKey" in details:
+            id_organisateur = details["UserKey"]
+        else:
+            logging.info(f"Ligne {numero_ligne} : 'UserKey' absent")
 
-            id_reunion = ""
-            id_organisateur = ""
-            email_organisateur = ""
-            id_organisation_organisateur = ""
-            type_reunion = ""
-            id_participant = ""
-            libelle_participant = ""
-            cle_participant = ""
-            type_cle = ""
-            id_organisation_participant = ""
-            debut = ""
-            fin = ""
-            adresse_ip = ""
-            materiel = ""
-            propriete = ""
+        id_organisation_organisateur = ""
+        if "OrganizationId" in details:
+            id_organisation_organisateur = details["OrganizationId"]
+        else:
+            logging.info(f"Ligne {numero_ligne} : 'OrganizationId' absent")
 
-            if "MeetingDetailId" in details:
-                id_reunion = details["MeetingDetailId"]
-            else:
-                logging.warning("Ligne {} : 'MeetingDetailId' absent".format(numero_ligne))
+        type_reunion = ""
+        if "ItemName" in details:
+            type_reunion = details["ItemName"]
+        else:
+            logging.info(f"Ligne {numero_ligne} : 'ItemName' absent")
 
-            if "UserId" in details:
-                email_organisateur = details["UserId"]
-            else:
-                logging.info("Ligne {} : 'UserId' absent".format(numero_ligne))
-
-            if "UserKey" in details:
-                id_organisateur = details["UserKey"]
-            else:
-                logging.info("Ligne {} : 'UserKey' absent".format(numero_ligne))
-
-            if "OrganizationId" in details:
-                id_organisation_organisateur = details["OrganizationId"]
-            else:
-                logging.info("Ligne {} : 'OrganizationId' absent".format(numero_ligne))
-
-            if "ItemName" in details:
-                type_reunion = details["ItemName"]
-            else:
-                logging.info("Ligne {} : 'ItemName' absent".format(numero_ligne))
-
-            if "Attendees" in details:
-                if "RecipientType" in details["Attendees"]:
-                    type_cle = details["Attendees"]["RecipientType"]
+        type_cle = ""
+        id_participant = ""
+        libelle_participant = ""
+        cle_participant = ""
+        id_organisation_participant = ""
+        if "Attendees" in details:
+            if len(details["Attendees"]) == 1:
+                if "RecipientType" in details["Attendees"][0]:
+                    type_cle = details["Attendees"][0]["RecipientType"]
                 else:
-                    logging.warning("Ligne {} : 'Attendees/RecipientType' absent".format(numero_ligne))
+                    type_cle = "?"
 
-                if "UserObjectId" in details["Attendees"]:
-                    id_participant = details["Attendees"]["UserObjectId"]
+                if "UserObjectId" in details["Attendees"][0]:
+                    id_participant = details["Attendees"][0]["UserObjectId"]
                     cle_participant = id_participant
 
-                    if "OrganizationId" in details["Attendees"]:
-                        id_organisation_participant = details["Attendees"]["OrganizationId"]
+                    if "OrganizationId" in details["Attendees"][0]:
+                        id_organisation_participant = details["Attendees"][0]["OrganizationId"]
 
-                elif "DisplayName" in details["Attendees"]:
-                    libelle_participant = details["Attendees"]["DisplayName"]
+                elif "DisplayName" in details["Attendees"][0]:
+                    libelle_participant = details["Attendees"][0]["DisplayName"].replace(DELIMITER, " ")
                     cle_participant = libelle_participant
                 else:
-                    logging.warning("Ligne {} : 'Attendees/UserObjectid-DisplayName' absents".format(numero_ligne))
+                    logging.warning(f"Ligne {numero_ligne} : 'Attendees/UserObjectid' et 'Attendees/DisplayName' absents")
             else:
-                logging.warning("Ligne {} : 'Attendees' absent".format(numero_ligne))
+                logging.warning(f"Ligne {numero_ligne} : 'Attendees' contient plus de {len(details['Attendees'])} participants au lieu de 1")
+        else:
+            logging.warning(f"Ligne {numero_ligne} : 'Attendees' absent")
 
-            if "ExtraProperties" in details:
-                if "Value" in details["ExtraProperties"]:
-                    propriete = details["ExtraProperties"]["Value"]
-                    propriete = re.sub(r" \(.*", "", propriete)
-                    propriete = re.sub(r"SkypeSpaces.*", "SkypeSpaces", propriete)
-                    propriete = re.sub(r"^[0-9].*", "Some Agent", propriete)
+        propriete = ""
+        if "ExtraProperties" in details:
+            if "Value" in details["ExtraProperties"]:
+                propriete = details["ExtraProperties"]["Value"]
+                propriete = re.sub(r" \(.*", "", propriete)
+                propriete = re.sub(r"SkypeSpaces.*", "SkypeSpaces", propriete)
+                propriete = re.sub(r"^[0-9].*", "Some Agent", propriete)
 
-            if "JoinTime" in details:
-                debut = details["JoinTime"]
-            else:
-                logging.warning("Ligne {} : 'JoinTime' absent".format(numero_ligne))
+        debut = ""
+        if "JoinTime" in details:
+            debut = details["JoinTime"]
+        else:
+            logging.warning(f"Ligne {numero_ligne} : 'JoinTime' absent")
 
-            if "LeaveTime" in details:
-                fin = details["LeaveTime"]
-            else:
-                logging.warning("Ligne {} : 'LeaveTime' absent".format(numero_ligne))
+        fin = ""
+        if "LeaveTime" in details:
+            fin = details["LeaveTime"]
+        else:
+            logging.warning(f"Ligne {numero_ligne} : 'LeaveTime' absent")
 
-            if "ClientIP" in details:
-                adresse_ip = details["ClientIP"]
-            else:
-                logging.info("Ligne {} : 'ClientIP' absent".format(numero_ligne))
+        adresse_ip = ""
+        if "ClientIP" in details:
+            adresse_ip = details["ClientIP"]
+        else:
+            logging.info(f"Ligne {numero_ligne} : 'ClientIP' absent")
 
-            if "DeviceInformation" in details:
-                materiel = details["DeviceInformation"].replace(",", " ")
-            else:
-                logging.info("Ligne {} : 'DeviceInformation' absent".format(numero_ligne))
+        materiel = ""
+        if "DeviceInformation" in details:
+            materiel = details["DeviceInformation"].replace(DELIMITER, " ")
+        else:
+            logging.info(f"Ligne {numero_ligne} : 'DeviceInformation' absent")
 
-            if id_reunion in organisateurs:
-                if email_organisateur != organisateurs[id_reunion]["email_organisateur"]:
-                    logging.warning("Ligne {} : 'email_organisateur' modifié pour la réunion: ".format(numero_ligne, id_reunion))
-                if id_organisateur != organisateurs[id_reunion]["id_organisateur"]:
-                    logging.warning("Ligne {} : 'id_organisateur' modifié pour la réunion: ".format(numero_ligne, id_reunion))
-                if id_organisation_organisateur != organisateurs[id_reunion]["id_organisation"]:
-                    logging.warning("Ligne {} : 'id_organisation_organisateur' modifié pour la réunion: ".format(numero_ligne, id_reunion))
-                if type_reunion != organisateurs[id_reunion]["type_reunion"]:
-                    logging.warning("Ligne {} : 'type_reunion' modifié pour la réunion: ".format(numero_ligne, id_reunion))
-                secondes = convertir_secondes(debut)
-                if secondes < 0:
-                    logging.error("Ligne {} : 'debut' incorrect: ".format(numero_ligne, debut))
-                elif secondes < convertir_secondes(organisateurs[id_reunion]["premier_arrive"]):
-                    organisateurs[id_reunion]["premier_arrive"] = debut
-                secondes = convertir_secondes(fin)
-                if secondes < 0:
-                    logging.error("Ligne {} : 'fin' incorrect: ".format(numero_ligne, fin))
-                elif secondes > convertir_secondes(organisateurs[id_reunion]["dernier_parti"]):
-                    organisateurs[id_reunion]["dernier_parti"] = fin
-                if cle_participant not in organisateurs[id_reunion]["participants"]:
-                    organisateurs[id_reunion]["participants"].append(cle_participant)
-            else:
-                # Nouvelle réunion
-                details_reunion = {}
-                details_reunion["email_organisateur"] = email_organisateur
-                details_reunion["id_organisateur"] = id_organisateur
-                details_reunion["id_organisation"] = id_organisation_organisateur
-                details_reunion["type_reunion"] = type_reunion
-                details_reunion["premier_arrive"] = debut
-                details_reunion["dernier_parti"] = fin
-                details_reunion["participants"] = [cle_participant]
-                organisateurs[id_reunion] = details_reunion
+        if id_reunion in organisateurs:
+            if email_organisateur != organisateurs[id_reunion]["email_organisateur"]:
+                logging.warning(f"Ligne {numero_ligne} : 'email_organisateur' modifié")
+            if id_organisateur != organisateurs[id_reunion]["id_organisateur"]:
+                logging.warning(f"Ligne {numero_ligne} : 'id_organisateur' modifié")
+            if id_organisation_organisateur != organisateurs[id_reunion]["id_organisation"]:
+                logging.warning(f"Ligne {numero_ligne} : 'id_organisation_organisateur' modifié")
+            # le type de réunion est différent pour les personnes invitées en cours de réunion
+            #if type_reunion != organisateurs[id_reunion]["type_reunion"]:
+            #    logging.warning(f"Ligne {numero_ligne} : 'type_reunion' modifié pour la réunion")
+            secondes = convertir_secondes(debut)
+            if secondes < 0:
+                logging.error(f"Ligne {numero_ligne} : 'debut' incorrect: {debut}")
+            elif secondes < convertir_secondes(organisateurs[id_reunion]["premier_arrive"]):
+                organisateurs[id_reunion]["premier_arrive"] = debut
+            secondes = convertir_secondes(fin)
+            if secondes < 0:
+                logging.error(f"Ligne {numero_ligne} : 'fin' incorrect: {fin}")
+            elif secondes > convertir_secondes(organisateurs[id_reunion]["dernier_parti"]):
+                organisateurs[id_reunion]["dernier_parti"] = fin
+            if cle_participant not in organisateurs[id_reunion]["participants"]:
+                organisateurs[id_reunion]["participants"].append(cle_participant)
+        else:
+            # Nouvelle réunion
+            details_reunion = {}
+            details_reunion["email_organisateur"] = email_organisateur
+            details_reunion["id_organisateur"] = id_organisateur
+            details_reunion["id_organisation"] = id_organisation_organisateur
+            details_reunion["type_reunion"] = type_reunion
+            details_reunion["premier_arrive"] = debut
+            details_reunion["dernier_parti"] = fin
+            details_reunion["participants"] = [cle_participant]
+            organisateurs[id_reunion] = details_reunion
 
-            if id_reunion in participants:
-                if cle_participant in participants[id_reunion]:
-                    i = 0
-                    doublon = False
-                    while i < len(participants[id_reunion][cle_participant]):
-                        if debut == participants[id_reunion][cle_participant][i]["debut"] \
-                        and fin == participants[id_reunion][cle_participant][i]["fin"] \
-                        and adresse_ip == participants[id_reunion][cle_participant][i]["adresse_ip"] \
-                        and materiel == participants[id_reunion][cle_participant][i]["materiel"] \
-                        and propriete == participants[id_reunion][cle_participant][i]["propriete"] \
-                        and type_cle == participants[id_reunion][cle_participant][i]["type_cle"] \
-                        and id_organisation_participant == participants[id_reunion][cle_participant][i]["id_organisation"]:
-                            doublon = True
+        if id_reunion in participants:
+            if cle_participant in participants[id_reunion]:
+                i = 0
+                doublon = False
+                while i < len(participants[id_reunion][cle_participant]):
+                    if debut == participants[id_reunion][cle_participant][i]["debut"] \
+                    and fin == participants[id_reunion][cle_participant][i]["fin"] \
+                    and adresse_ip == participants[id_reunion][cle_participant][i]["adresse_ip"] \
+                    and materiel == participants[id_reunion][cle_participant][i]["materiel"] \
+                    and propriete == participants[id_reunion][cle_participant][i]["propriete"] \
+                    and type_cle == participants[id_reunion][cle_participant][i]["type_cle"] \
+                    and id_organisation_participant == participants[id_reunion][cle_participant][i]["id_organisation"]:
+                        doublon = True
+                        break
+
+                    # On va trier les connexions par heure de début, puis par heure de fin :
+                    secondes_debut_nouveau = convertir_secondes(debut)
+                    secondes_debut_element = convertir_secondes(participants[id_reunion][cle_participant][i]["debut"])
+                    if secondes_debut_nouveau < secondes_debut_element:
+                        break
+                    if secondes_debut_nouveau == secondes_debut_element:
+                        secondes_fin_nouveau = convertir_secondes(fin)
+                        secondes_fin_element = convertir_secondes(participants[id_reunion][cle_participant][i]["fin"])
+                        if secondes_fin_nouveau <= secondes_fin_element:
                             break
 
-                        # On va trier les connexions par heure de début, puis par heure de fin :
-                        secondes_debut_nouveau = convertir_secondes(debut)
-                        secondes_debut_element = convertir_secondes(participants[id_reunion][cle_participant][i]["debut"])
-                        if secondes_debut_nouveau < secondes_debut_element:
-                            break
-                        elif secondes_debut_nouveau == secondes_debut_element:
-                            secondes_fin_nouveau = convertir_secondes(fin)
-                            secondes_fin_element = convertir_secondes(participants[id_reunion][cle_participant][i]["fin"])
-                            if secondes_fin_nouveau <= secondes_fin_element:
-                                break
+                    i += 1
 
-                        i += 1
-
-                    if not doublon:
-                        # Nouvelle connexion du participant à la réunion
-                        details_connexion = {}
-                        details_connexion["type_cle"] = type_cle
-                        details_connexion["id_organisation"] = id_organisation_participant
-                        details_connexion["debut"] = debut
-                        details_connexion["fin"] = fin
-                        details_connexion["adresse_ip"] = adresse_ip
-                        details_connexion["materiel"] = materiel
-                        details_connexion["propriete"] = propriete
-
-                        # insertion triée :
-                        participants[id_reunion][cle_participant] = participants[id_reunion][cle_participant][:i] \
-                                                                    + [details_connexion] \
-                                                                    +  participants[id_reunion][cle_participant][i:]
-                else:
-                    # Nouveau participant à la réunion
+                if not doublon:
+                    # Nouvelle connexion du participant à la réunion
                     details_connexion = {}
                     details_connexion["type_cle"] = type_cle
                     details_connexion["id_organisation"] = id_organisation_participant
@@ -474,9 +355,13 @@ def extraire_reunions(fichier, afficher):
                     details_connexion["adresse_ip"] = adresse_ip
                     details_connexion["materiel"] = materiel
                     details_connexion["propriete"] = propriete
-                    participants[id_reunion][cle_participant] = [details_connexion]
+
+                    # insertion triée :
+                    participants[id_reunion][cle_participant] = participants[id_reunion][cle_participant][:i] \
+                                                                + [details_connexion] \
+                                                                +  participants[id_reunion][cle_participant][i:]
             else:
-                # Nouvelle réunion
+                # Nouveau participant à la réunion
                 details_connexion = {}
                 details_connexion["type_cle"] = type_cle
                 details_connexion["id_organisation"] = id_organisation_participant
@@ -485,24 +370,38 @@ def extraire_reunions(fichier, afficher):
                 details_connexion["adresse_ip"] = adresse_ip
                 details_connexion["materiel"] = materiel
                 details_connexion["propriete"] = propriete
-                participant = {cle_participant: [details_connexion]}
-                participants[id_reunion] = participant
+                participants[id_reunion][cle_participant] = [details_connexion]
+        else:
+            # Nouvelle réunion
+            details_connexion = {}
+            details_connexion["type_cle"] = type_cle
+            details_connexion["id_organisation"] = id_organisation_participant
+            details_connexion["debut"] = debut
+            details_connexion["fin"] = fin
+            details_connexion["adresse_ip"] = adresse_ip
+            details_connexion["materiel"] = materiel
+            details_connexion["propriete"] = propriete
+            participant = {cle_participant: [details_connexion]}
+            participants[id_reunion] = participant
 
         numero_ligne += 1
 
     return organisateurs, participants
 
-
 ################################################################################
 def charger_uids(nom_fichier):
     """ Construit un dictionnaire UID: EMAIL à partir d'un fichier CSV UID,EMAIL """
     uids = {}
+
+    if not os.path.isfile(nom_fichier):
+        with open(nom_fichier, "w", encoding="utf-8") as fichier:
+            pass
+
     with open(nom_fichier, "r", encoding="utf-8") as fichier:
         for ligne in fichier.readlines():
             champs = ligne.strip().split(",")
             uids[champs[0]] = champs[1]
     return uids
-
 
 ################################################################################
 def mettre_a_jour_uids(nom_fichier, organisateurs, uids):
@@ -516,139 +415,105 @@ def mettre_a_jour_uids(nom_fichier, organisateurs, uids):
     if nouveaux_uids:
         with open(nom_fichier, "w", encoding="utf-8") as fichier:
             for uid in uids:
-                fichier.write(
-                    "{:s},{:s}\n".format(
-                        uid,
-                        uids[uid],
-                    )
-                )
+                fichier.write(f"{uid},{uids[uid]}\n")
 
     return uids
-
 
 ################################################################################
 def lister_organisateurs(reunions):
     """ Lister les réunions au format CSV """
     print("#meeting_id,organizer_email,organizer_id,organizer_organization,meeting_type,first_join,last_leave,number_attendees")
-    for id_reunion in reunions:
-        print(
-            "{:s},{:s},{:s},{:s},{:s},{:s},{:s},{:d}".format(
-                id_reunion,
-                reunions[id_reunion]["email_organisateur"],
-                reunions[id_reunion]["id_organisateur"],
-                reunions[id_reunion]["id_organisation"],
-                reunions[id_reunion]["type_reunion"],
-                reunions[id_reunion]["premier_arrive"],
-                reunions[id_reunion]["dernier_parti"],
-                len(reunions[id_reunion]["participants"]),
-            )
-        )
-
+    for k, v in reunions.items():
+        print(f'{k},{v["email_organisateur"]},{v["id_organisateur"]},{v["id_organisation"]},{v["type_reunion"]},{v["premier_arrive"]},{v["dernier_parti"]},{len(v["participants"])}')
 
 ################################################################################
-def lister_participants(reunions):
+def lister_participants(reunions, uids):
     """ Lister les connexions des participants de réunions au format CSV """
-    print("#meeting_id,attendee_key,key_type,attendee_organization,join_time,leave_time,client_ip,device,property")
-    for id_reunion in reunions:
-        for cle_participant in reunions[id_reunion]:
-            for connexion in reunions[id_reunion][cle_participant]:
-                print(
-                    "{:s},{:s},{:s},{:s},{:s},{:s},{:s},{:s},{:s}".format(
-                        id_reunion,
-                        cle_participant,
-                        connexion["type_cle"],
-                        connexion["id_organisation"],
-                        connexion["debut"],
-                        connexion["fin"],
-                        connexion["adresse_ip"],
-                        connexion["materiel"],
-                        connexion["propriete"],
-                    )
-                )
-
+    print("#meeting_id,attendee_key,attendee_email,key_type,attendee_organization,join_time,leave_time,client_ip,device,property")
+    for kr in reunions: # kr = clé de réunion
+        for kp in reunions[kr]: # kp = clé de participant
+            participant = ""
+            if kp in uids:
+                participant = uids[kp]
+            for c in reunions[kr][kp]: # c = connexion
+                print(f'{kr},{kp},{participant},{c["type_cle"]},{c["id_organisation"]},{c["debut"]},{c["fin"]},{c["adresse_ip"]},{c["materiel"]},{c["propriete"]}')
 
 ################################################################################
 def lister_deconnexions(organisateurs, participants, uids, filtre):
     """ Liste les réunions/participants/connexions avec suspicion de déconnexion """
+    reunions_affectees = 0
+    participants_affectes = 0
+    total_participants = 0
     for id_reunion in participants:
         infos_reunion = False
+        reunion_affectee = False
+        total_participants += len(participants[id_reunion])
         for cle_participant in participants[id_reunion]:
             infos_participant = False
-            if len(participants[id_reunion][cle_participant]) > 1:
-                selectionne = False
-                if filtre:
-                    # on vérifie si au moins 1 des connexions est faite à partir d'une adresse filtrée :
-                    for connexion in participants[id_reunion][cle_participant]:
-                        if filtre.search(connexion["adresse_ip"]):
-                            selectionne = True
-                            break
-                else:
-                    selectionne = True
 
-                if selectionne:
+            devices = {}
+            for connexion in participants[id_reunion][cle_participant]:
+                if not filtre or filtre.search(connexion["adresse_ip"]):
+                    device = connexion["materiel"]
+                    if not device:
+                        device = "?"
+                    debut_connexion = re.sub(r".*T", "", connexion["debut"])
+                    fin_connexion = re.sub(r".*T", "", connexion["fin"])
+                    if device in devices:
+                        devices[device].append(f'    Time: {debut_connexion} - {fin_connexion} / IP address: {connexion["adresse_ip"]:15s} / Device: {connexion["materiel"]} / Property: {connexion["propriete"]}')
+                    else:
+                        devices[device] = [f'    Time: {debut_connexion} - {fin_connexion} / IP address: {connexion["adresse_ip"]:15s} / Device: {connexion["materiel"]} / Property: {connexion["propriete"]}']
+
+            participant_affecte = False
+            for device, connexions in devices.items():
+                if len(connexions) > 1:
+                    participant_affecte = True
+                    reunion_affectee = True
                     if not infos_reunion:
                         # Informations sur la réunion :
                         date_reunion = re.sub(r"T.*", "", organisateurs[id_reunion]["premier_arrive"])
                         debut_reunion = re.sub(r".*T", "", organisateurs[id_reunion]["premier_arrive"])
                         fin_reunion = re.sub(r".*T", "", organisateurs[id_reunion]["dernier_parti"])
-                        print(
-                            "Meeting ID: {:s} / Type: {:s} / Date: {:s} / Time: {:s} - {:s} / #Attendees: {:d}".format(
-                                id_reunion,
-                                organisateurs[id_reunion]["type_reunion"],
-                                date_reunion,
-                                debut_reunion,
-                                fin_reunion,
-                                len(organisateurs[id_reunion]["participants"]),
-                            )
-                        )
+                        print(f'Meeting ID: {id_reunion} / Type: {organisateurs[id_reunion]["type_reunion"]} / Date: {date_reunion} / Time: {debut_reunion} - {fin_reunion} / #Attendees: {len(organisateurs[id_reunion]["participants"])}')
                         infos_reunion = True
 
-                    # Information sur les participants:
                     if not infos_participant:
                         # Informations sur le participant :
                         if cle_participant in uids:
-                            print(
-                                "  Attendee: {:s} / Key type: {:s} / Email: {:s} / Organization ID: {:s}".format(
-                                    cle_participant,
-                                    participants[id_reunion][cle_participant][0]["type_cle"],
-                                    uids[cle_participant],
-                                    participants[id_reunion][cle_participant][0]["id_organisation"],
-                                )
-                            )
+                            print(f'  Attendee: {cle_participant} / Key type: {participants[id_reunion][cle_participant][0]["type_cle"]} / Email: {uids[cle_participant]} / Organization ID: {participants[id_reunion][cle_participant][0]["id_organisation"]}')
                         else:
-                            print(
-                                "  Attendee: {:s} / Key type: {:s} / Organization ID: {:s}".format(
-                                    cle_participant,
-                                    participants[id_reunion][cle_participant][0]["type_cle"],
-                                    participants[id_reunion][cle_participant][0]["id_organisation"],
-                                )
-                            )
+                            print(f'  Attendee: {cle_participant} / Key type: {participants[id_reunion][cle_participant][0]["type_cle"]} / Organization ID: {participants[id_reunion][cle_participant][0]["id_organisation"]}')
                         infos_participant = True
 
-                    for connexion in participants[id_reunion][cle_participant]:
-                        debut_connexion = re.sub(r".*T", "", connexion["debut"])
-                        fin_connexion = re.sub(r".*T", "", connexion["fin"])
-                        if connexion["propriete"] == 'CallSignalingAgent':
-                            print(
-                                "    Time: {:s} - {:s} / IP address: {:15s} / Device: {:s}".format(
-                                    debut_connexion,
-                                    fin_connexion,
-                                    connexion["adresse_ip"],
-                                    connexion["materiel"],
-                                )
-                            )
-                        else:
-                            print(
-                                "    Time: {:s} - {:s} / IP address: {:15s} / Device: {:s} / Properties: {:s}".format(
-                                    debut_connexion,
-                                    fin_connexion,
-                                    connexion["adresse_ip"],
-                                    connexion["materiel"],
-                                    connexion["propriete"],
-                                )
-                            )
+                    # reconnexions suspectes :
+                    for connexion in connexions:
+                        print(connexion)
                     print()
+            if participant_affecte:
+                participants_affectes += 1
+        if reunion_affectee:
+            reunions_affectees += 1
 
+    print("=====")
+    print(f"{reunions_affectees} meetings affected out of {len(participants)} ({100 * reunions_affectees / len(participants):.1f}%)")
+    print(f"{participants_affectes} attendees affected out of {total_participants} ({100 * participants_affectes / total_participants:.1f}%)")
+
+################################################################################
+def traiter_fichier(fichier, uids):
+    """ Traite une source et retourne les uids mis à jour """
+    organisateurs, participants = extraire_reunions(fichier, parametres["Afficher contenu"])
+
+    if parametres["Base utilisateurs"]:
+        uids = mettre_a_jour_uids(parametres["Base utilisateurs"], organisateurs, uids)
+
+    if parametres["Lister organisateurs"]:
+        lister_organisateurs(organisateurs)
+    elif parametres["Lister participants"]:
+        lister_participants(participants, uids)
+    elif parametres["Lister deconnexions"]:
+        lister_deconnexions(organisateurs, participants, uids, parametres["Filtre adresses"])
+
+    return uids
 
 ################################################################################
 def main():
@@ -670,35 +535,15 @@ def main():
             if os.path.isfile(argument):
                 # Traitement du fichier :
                 with open(argument, "r", encoding="utf-8") as fichier:
-                    organisateurs, participants = extraire_reunions(fichier, parametres["Afficher contenu"])
-
-                    if parametres["Base utilisateurs"]:
-                        uids = mettre_a_jour_uids(parametres["Base utilisateurs"], organisateurs, uids)
-
-                    if parametres["Lister organisateurs"]:
-                        lister_organisateurs(organisateurs)
-                    elif parametres["Lister participants"]:
-                        lister_participants(participants)
-                    elif parametres["Lister deconnexions"]:
-                        lister_deconnexions(organisateurs, participants, uids, parametres["Filtre adresses"])
+                    uids = traiter_fichier(fichier, uids)
 
             else:
-                logging.error("'%s' is not a file name", argument)
+                logging.error(f"'{argument}' is not a file name")
                 exit_status += 1
     else:
         # Traitement des données sur l'entrée standard :
         fichier = sys.stdin
-        organisateurs, participants = extraire_reunions(fichier, parametres["Afficher contenu"])
-
-        if parametres["Base utilisateurs"]:
-            uids = mettre_a_jour_uids(parametres["Base utilisateurs"], organisateurs, uids)
-
-        if parametres["Lister organisateurs"]:
-            lister_organisateurs(organisateurs)
-        elif parametres["Lister participants"]:
-            lister_participants(participants)
-        elif parametres["Lister deconnexions"]:
-            lister_deconnexions(organisateurs, participants, uids, parametres["Filtre adresses"])
+        uids = traiter_fichier(fichier, uids)
 
     sys.exit(exit_status)
 

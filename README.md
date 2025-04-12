@@ -3,9 +3,7 @@
 ## What is it?
 A portable Python-only tool to process Microsoft Teams Audit Logs.
 
-The original goal was to help spot network issues (connections lost) by looking at people making multiple successive connections to the same meeting.
-
-[![Servier Inspired](https://raw.githubusercontent.com/servierhub/.github/main/badges/inspired.svg)](https://github.com/ServierHub/)
+The original goal was to help spot network issues (connections lost) by looking at people making multiple successive connections to the same meeting with the same device.
 
 ## Usage
 ```
@@ -43,20 +41,20 @@ Please note that the suspected disconnection cases are still crude so far, and c
 
 | Line | Content | Usual values |
 | --- | --- | --- |
-| 1 | header line | "CreationDate,UserIds,Operations,AuditData" |
+| 1 | header line | "CreationDate,UserId,Operation,AuditData" |
 | 2-50001 | content lines | field1,field2,field3,field4 |
 
-The audit data is truncated at 50.000 lines per extract file.
+The audit data used to be truncated at 50.000 lines per extract file. If you have files with exactly 50.001 lines, try exporting data on a shorter time span.
 
-If you have files with exactly 50.001 lines, try exporting data on a shorter time span.
+NB: The fields can be in any order and there may be additional fields but *tala* expects at least the 4 mentioned above, with a comma-separator.
 
 ### Content lines format
 
 | Field | Usual values |
 | --- | --- |
 | CreationDate | a date in "YYYY-MM-JJThh:mm:ss.0000000Z" format |
-| UserIds | the email address of the organizer |
-| Operations| apparently always "MeetingParticipantDetail", but according to the references below there are other possible values |
+| UserId | the email address of the organizer (that field was formerly called "UsedIds") |
+| Operation | apparently always "MeetingParticipantDetail", but according to the references below there are other possible values (that field was formerly called "Operations") |
 | AuditData | see below... |
 
 #### AuditData field format
@@ -64,9 +62,9 @@ If you have files with exactly 50.001 lines, try exporting data on a shorter tim
 | Field | Usual values |
 | --- | --- |
 | CreationTime | a date in "YYYY-MM-JJThh:mm:ss" format |
-| Id | an [UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier) |
+| Id | the record [UUID](https://en.wikipedia.org/wiki/Universally_unique_identifier) |
 | Operation | apparently always "MeetingParticipantDetail" |
-| OrganizationId | the organizer's organisation UUID. Maybe a Microsoft365 tenant ID? |
+| OrganizationId | the organizer's organisation UUID ([Microsoft 365 tenant ID](https://www.whatismytenantid.com/)) |
 | RecordType | apparently always 25 |
 | UserKey | the organizer UUID |
 | UserType | apparently always 0 |
@@ -75,29 +73,52 @@ If you have files with exactly 50.001 lines, try exporting data on a shorter tim
 | ClientIP | an IPv4 or IPv6 address (usually the one before a proxy) |
 | UserId | the email address of the organizer |
 | ArtifactsShared | a list. Not always present. See below |
-| Attendees | a list. See below |
+| Attendees | a list of 1 element. See below |
 | DeviceId | some code (maybe for devices enrolled in Intune?). Not always present |
 | ExtraProperties | a list. See below |
 | JoinTime | the meeting join date in "YYYY-MM-JJThh:mm:ss" format |
 | LeaveTime | the meeting leave date in "YYYY-MM-JJThh:mm:ss" format |
 | MeetingDetailId | the meeting UUID |
 | DeviceInformation | a string describing the device used by the attendee |
-| ItemName | a value such as "ScheduledMeeting", "RecurringMeeting", "Escalation", "AdHocMeeting", "ChannelMeeting", "MicrosoftTeams", "Complete", "Broadcast", "ScreenSharingCall", "31" |
+| ItemName | a value with a comma-separated combination of the following words: "ScheduledMeeting", "RecurringMeeting", "AdHocMeeting", "Escalation", "Transfer", "CallQueue", "AutoAttendant", "MicrosoftTeams", "ChannelMeeting", "ScreenSharingCall", "Broadcast", "Streaming", "Cast", "Complete", "31" |
 
 #### ArtifactsShared sub-field format
 
 | Sub-field | Usual values |
 | --- | --- |
-| ArtifactSharedName | apparently always "videoTransmitted". I believe it's used when the meeting is recorded |
+| ArtifactSharedName | apparently always "videoTransmitted" or ""screenShared" |
 
 #### Attendees sub-field format
+
+Can be either:
 
 | Sub-field | Usual values |
 | --- | --- |
 | OrganizationId | not always present |
-| RecipientType | either "User", "Anonymous", "Applications" or "Phone" |
+| RecipientType | either "InternalFederated" or "GuestFederated". Used to be either "User", "Anonymous", "Applications" or "Phone" |
 | UserObjectId | the attendee's UUID when it's a "User". Not present otherwise |
-| DisplayName | a phone number when it's a "Phone", an application UUID when it's an "Applications", "teamsvisitor:" followed by a code when it's a "Anonymous". Not present otherwise |
+| DisplayName | the display name when it's a "GuestFederated" user, a phone number when it's a "Phone", an application UUID when it's an "Applications", "teamsvisitor:" followed by a code when it's a "Anonymous" |
+| Role | apparently always 1 or 3 |
+| UPN | the email address when it's an "InternalFederated" or "GuestFederated" user |
+
+or:
+
+| Sub-field | Usual values |
+| --- | --- |
+| DisplayName | an unstructured display name |
+| Role | apparently always 1 or 3 |
+| UPN | then email address when it's an "InternalFederated" or "GuestFederated" user |
+
+In addition, when the meeting participant is added during the meeting, there's an "InviterInfo" record associated with one of the 2 previous types:
+
+| Sub-field | Sub-sub-field | Usual values |
+| --- | --- | --- |
+| InviterInfo | InviteTime | a date in "YYYY-MM-JJThh:mm:ss" format |
+| InviterInfo | OrganizationId | the inviter's organization UUID |
+| InviterInfo | UserType | either "Teams", "PSTN" or "TeamsForLife" |
+| InviterInfo | DisplayName | the display name of the inviter |
+| InviterInfo | UPN | the email address of the inviter |
+| InviterInfo | UserIdentifier | the inviter's UUID |
 
 #### ExtraProperties sub-field format
 
