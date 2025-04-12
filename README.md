@@ -37,8 +37,6 @@ You can either use it:
     * for example "^10\\.5[78]\\." for IPv4 addresses beginning with "10.57." or "10.58.".
   * you can use the CSV file with UUID,EMAIL to identify attendees encountering network issues (-u FILE)
 
-Please note that the suspected disconnection cases are still crude so far, and contain false positives (for example, when you have multiple rather than successive connections to the same meeting, using different devices).
-
 ## Audit log file format
 
 | Line | Content | Usual values |
