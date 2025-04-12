@@ -99,7 +99,7 @@ Can be either:
 | OrganizationId | not always present |
 | RecipientType | either "InternalFederated" or "GuestFederated". Used to be either "User", "Anonymous", "Applications" or "Phone" |
 | UserObjectId | the attendee's UUID when it's a "User". Not present otherwise |
-| DisplayName | the display name when it's a "GuestFederated" user, a phone number when it's a "Phone", an application UUID when it's an "Applications", "teamsvisitor:" followed by a code when it's a "Anonymous" |
+| DisplayName | the display name when it's a "InternalFederated" or "GuestFederated" user, a phone number when it's a "Phone", an application UUID when it's an "Applications", "teamsvisitor:" followed by a code when it's a "Anonymous" |
 | Role | apparently always 1 or 3 |
 | UPN | the email address when it's an "InternalFederated" or "GuestFederated" user |
 
