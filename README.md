@@ -5,6 +5,8 @@ A portable Python-only tool to process Microsoft Teams Audit Logs.
 
 The original goal was to help spot network issues (connections lost) by looking at people making multiple successive connections to the same meeting with the same device.
 
+[![Servier Inspired](https://raw.githubusercontent.com/servierhub/.github/main/badges/inspired.svg)](https://github.com/ServierHub/)
+
 ## Usage
 ```
 usage: tala [--debug] [--help|-?] [--version]
